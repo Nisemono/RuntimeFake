@@ -168,25 +168,26 @@ describe(@"NISERuntimeFake", ^{
 
     describe(@"capturing property", ^{
 
-        __block NSURL *capturedURL;
-        __block NSURL *initialURL;
-        __block Class fakeClass;
+        __block NSString *capturedPath;
+        __block NSFileManager *fakeFileManager;
 
         beforeEach(^{
-            fakeClass = [[NSURLConnection fake] class];
+            fakeFileManager = [NSFileManager fake];
         });
 
         subjectAction(^{
-            [fakeClass overrideInstanceMethod:@selector(start) withImplementation:^void(NSURLConnection *_self) {
-                capturedURL = [[_self currentRequest] URL];
-            }];
-            initialURL = [[NSURL alloc] initWithString:@"http://FixtureURL.com"];
-            NSURLRequest *URLRequest = [NSURLRequest requestWithURL:initialURL];
-            [[fakeClass alloc] initWithRequest:URLRequest delegate:nil];
+            [fakeFileManager overrideInstanceMethod:@selector(removeItemAtPath:error:)
+                                 withImplementation:^BOOL(NSFileManager *_self,
+                                         NSString *path,
+                                         NSError **error) {
+                                     capturedPath = path;
+                                     return YES;
+                                 }];
+            [fakeFileManager removeItemAtPath:@"fixture file path" error:nil];
         });
 
-        it(@"should get initial url", ^{
-            capturedURL should equal(initialURL);
+        it(@"should capture removed file's path", ^{
+            capturedPath should equal(@"fixture file path");
         });
     });
 

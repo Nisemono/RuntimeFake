@@ -5,29 +5,65 @@
 #import <objc/runtime.h>
 #import "NSObject+NISERuntimeFake.h"
 
+static char *const NISERealClassKey = "NISERealClass";
+
 @implementation NSObject (NISERuntimeFake)
 
 + (Class)fakeClass {
     NSString *className = [NSString stringWithFormat:@"NISEFake%@", NSStringFromClass([self class])];
     [self assertClassNotExists:NSClassFromString(className)];
 
-    Class class = objc_allocateClassPair(self.class, [className cStringUsingEncoding:NSUTF8StringEncoding], 0);
+    Class class = objc_allocateClassPair([NSObject class], [className cStringUsingEncoding:NSUTF8StringEncoding], 0);
     return class;
 }
 
 + (id)fake {
     Class fakeClass = [self fakeClass];
-    return [[fakeClass alloc] init];
+    id fake = [[fakeClass alloc] init];
+    objc_setAssociatedObject(fake, NISERealClassKey, [self class], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    [fake overrideInstanceMethod:@selector(superclass) withImplementation:^Class(id _self){
+        return [self class];
+    }];
+
+    [fake overrideInstanceMethod:@selector(isKindOfClass:) withImplementation:^BOOL(id _self, Class aClass){
+        return [[self class] isSubclassOfClass:aClass];
+    }];
+
+    [fake overrideInstanceMethod:@selector(isMemberOfClass:) withImplementation:^BOOL(id _self, Class aClass){
+        return [self class] == aClass;
+    }];
+
+    [fake overrideInstanceMethod:@selector(respondsToSelector:) withImplementation:^BOOL(id _self, SEL selector){
+        BOOL respondsToSelector = NO;
+        if(class_getInstanceMethod([self class], selector)){
+            respondsToSelector = YES;
+        }else if(class_getInstanceMethod([fake class], selector)){
+            respondsToSelector = YES;
+        }
+        return (BOOL) class_getInstanceMethod([self class], selector) || class_getInstanceMethod([fake class], selector);
+    }];
+
+    return fake;
 }
 
 + (id)fakeObjectWithProtocol:(Protocol *)protocol includeOptionalMethods:(BOOL)optional {
-    Class fakeClass = [self fakeClass];
-    [self addProtocolWithConformingProtocols:protocol toClass:fakeClass includeOptionalMethods:optional];
-    return [[fakeClass alloc] init];
+    id fake = [self fake];
+    [self addProtocolWithConformingProtocols:protocol toClass:[fake class] includeOptionalMethods:optional];
+
+    [fake overrideInstanceMethod:@selector(conformsToProtocol:) withImplementation:^BOOL(id _self, Protocol *aProtocol){
+        return [[fake class] conformsToProtocol:aProtocol];
+    }];
+
+    return fake;
 }
 
 - (void)overrideInstanceMethod:(SEL)selector withImplementation:(id)block {
-    Method method = class_getInstanceMethod([self class], selector);
+    Class realClass = objc_getAssociatedObject(self, NISERealClassKey);
+    Method method = class_getInstanceMethod(realClass, selector);
+    if(method == nil){
+        method = class_getInstanceMethod([self class], selector);
+    }
     [self assertClassIsFake:method];
     [self assertMethodExists:method];
     if (method) {
